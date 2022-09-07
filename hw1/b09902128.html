@@ -1,0 +1,1232 @@
+<html>
+
+<head>
+<title>ICG WebGL &mdash; HW1</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto-Mono">
+<link rel="stylesheet" href="style.css">
+<script type="text/javascript" src="./js/glMatrix-0.9.5.js"></script>
+<script type="text/javascript" src="./js/webgl-utils.js"></script>
+<script type="text/javascript" src="./js/calculate.js" ></script>
+<!-- 
+    TODO HERE: 
+    modify fragment shader or write another one
+    to implement flat, gouraud and phong shading
+ -->
+ <script id="toon_fragmentShader" type="fragment">
+    precision mediump float;
+    
+    varying vec3 N;
+    varying vec4 ambient;
+    varying vec3 L;
+    varying vec3 E;
+    uniform vec4 diffuseProduct, specularProduct;
+    uniform float shininess;
+
+    void main( void ) {
+
+        vec3 R = normalize( 2.0 * dot( N, L ) * N - L );
+        
+        float Kd = max( dot( L, N ), 0.0 );
+        vec4 fcolor;
+        if ( Kd > 0.66 ){
+            fcolor = diffuseProduct;
+        } else if ( Kd > 0.33 ){   
+            fcolor = diffuseProduct * 0.66;
+        } else {
+            fcolor = diffuseProduct * 0.33;
+        }
+        if ( dot( E, N ) < 0.1 ){
+            fcolor = vec4( 0.0, 0.0, 0.0, 1.0 );
+        }
+        fcolor.a = 1.0;
+        gl_FragColor = fcolor;
+    }
+</script> 
+<script id="phong_fragmentShader" type="fragment">
+    precision mediump float;
+    
+    varying vec3 N;
+    varying vec3 L[3];
+    varying vec3 E;
+    varying vec4 ambient;
+
+    uniform vec4 diffuseProduct, specularProduct;
+    uniform float shininess;
+
+    void main( void ) {
+        vec4 Specular = vec4( 0.0, 0.0, 0.0, 0.0 );
+        vec4 Diffuse = vec4( 0.0, 0.0, 0.0, 0.0 );
+        
+        for ( int i = 0; i < 3; i++ ) {
+            vec3 R = normalize( 2.0 * dot( N, L[i] ) * N - L[i] );
+            
+            float Kd = max( dot( L[i], N ), 0.0 );
+            vec4 diffuse = Kd * diffuseProduct;
+            
+            float Ks = pow( max( dot( R, E ), 0.0 ), shininess );
+            vec4 specular = Ks * specularProduct;
+    
+            if ( dot( L[i], N ) < 0.0 ) {
+                specular = vec4( 0.0, 0.0, 0.0, 1.0 );
+            }
+            if ( i == 0 ) {
+                Specular += 2.0 * specular;
+                Diffuse += 2.0 * diffuse;
+            }
+            else {
+                Specular += specular;
+                Diffuse += diffuse;
+            }
+        }
+        vec4 fcolor = ambient + 0.25 * ( Diffuse + Specular );
+        fcolor.a = 1.0;
+        gl_FragColor = fcolor;
+    }
+</script>
+<script id="fragmentShader" type="fragment">
+    precision mediump float;
+
+    varying vec4 fColor;
+
+    void main(void) {
+        gl_FragColor = fColor;
+    }
+</script>
+<script id="flat_fragmentShader" type="fragment">
+    #extension GL_OES_standard_derivatives : enable
+    precision mediump float;
+    
+    varying vec3 pos;
+    varying vec3 L[3];
+    varying vec3 E;
+    varying vec4 ambient;
+
+    uniform vec4 diffuseProduct, specularProduct;
+    uniform float shininess;
+
+    void main( void ) {
+        vec3 U = dFdx( pos );
+        vec3 V = dFdy( pos );
+        vec3 N = normalize( cross( U, V ) );
+        vec4 Diffuse = vec4( 0.0, 0.0, 0.0, 0.0 );
+        vec4 Specular = vec4( 0.0, 0.0, 0.0, 0.0 );
+        for (int i = 0; i < 3; i++) {
+            vec3 R;
+            R = normalize( 2.0 * dot( N, L[i] ) * N - L[i] );
+            float Kd = max( dot( L[i], N ), 0.0 );
+            vec4 diffuse = Kd * diffuseProduct;
+            float Ks = pow( max( dot( R, E ), 0.0 ), shininess );
+            vec4 specular = Ks * specularProduct;
+            if ( dot( L[i], N ) < 0.0 ) {
+                specular = vec4( 0.0, 0.0, 0.0, 1.0 );
+            }
+            if ( i == 0 ) {
+                Diffuse += 2.0 * diffuse;
+                Specular += 2.0 * specular;
+            }
+            else {
+                Diffuse += diffuse;
+                Specular += specular;
+            }
+        }
+        vec4 fcolor = ambient + 0.25 * ( Diffuse + Specular );
+        fcolor.a = 1.0;
+        gl_FragColor = fcolor;
+    }
+</script>
+<!-- 
+    TODO HERE:
+    modify vertex shader or write another one
+    to implement flat, gouraud and phong shading
+
+    NOTE:
+    if you want to write bonus part (texture mapping),
+    only Teapot.json has extra attribute "vertexTextureCoords"
+    which is used for texture mappping.
+ -->
+ <script id="toon_vertexShader" type="vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec3 aFrontColor;
+    attribute vec3 aVertexNormal;
+
+    varying vec3 N;
+    varying vec3 L;
+    varying vec4 ambient;
+    varying vec3 E;
+
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 normalMatrix;
+    uniform vec4 ambientProduct;
+    uniform vec4 lightPosition[3];
+
+
+    void main( void ) {
+        vec3 pos = ( uMVMatrix * vec4( aVertexPosition, 1.0 ) ).xyz;
+        
+        if ( lightPosition[0].w == 0.0 ) L = normalize( lightPosition[0].xyz );
+        else L = normalize( lightPosition[0].xyz - pos );
+        E = -normalize( pos );
+        N = normalize( normalMatrix * aVertexNormal );
+        ambient = vec4( aFrontColor * ambientProduct.xyz, 1.0 );
+
+        gl_Position = uPMatrix * uMVMatrix * vec4( aVertexPosition, 1.0 );
+    }
+</script>
+<script id="phong_vertexShader" type="vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec3 aFrontColor;
+    attribute vec3 aVertexNormal;
+
+    varying vec3 N;
+    varying vec3 L[3];
+    varying vec3 E;
+    varying vec4 ambient;
+
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 normalMatrix;
+    uniform vec4 ambientProduct;
+    uniform vec4 lightPosition[3];
+
+
+    void main( void ) {
+        vec3 pos = ( uMVMatrix * vec4( aVertexPosition, 1.0 ) ).xyz;
+        for ( int i = 0; i < 3; i++ ) {
+            if ( lightPosition[i].w == 0.0 ) L[i] = normalize( lightPosition[i].xyz );
+            else L[i] = normalize( lightPosition[i].xyz - pos );
+        }
+        E = -normalize( pos );
+        // N = normalize( (uMVMatrix * vec4( aVertexNormal, 0.0 )).xyz );
+        N = normalize( normalMatrix * aVertexNormal );
+        ambient = vec4( aFrontColor * ambientProduct.xyz, 1.0 );
+
+        gl_Position = uPMatrix * uMVMatrix * vec4( aVertexPosition, 1.0 );
+    }
+</script>
+<script id="gouraud_vertexShader" type="vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec3 aFrontColor;
+    attribute vec3 aVertexNormal;
+
+    varying vec4 fColor;
+
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    uniform vec4 ambientProduct, diffuseProduct, specularProduct;
+    uniform vec4 lightPosition[3];
+    uniform float shininess;
+    uniform mat3 normalMatrix;
+
+
+    void main( void ) {
+        vec3 pos = ( uMVMatrix * vec4( aVertexPosition, 1.0 ) ).xyz;
+        vec3 E = -normalize( pos );
+        // vec3 N = normalize( (uMVMatrix * vec4( aVertexNormal, 0.0 )).xyz );
+        vec3 N = normalize( normalMatrix * aVertexNormal );
+        vec4 ambient = vec4( aFrontColor * ambientProduct.xyz, 1.0 );
+        vec4 Diffuse = vec4( 0.0, 0.0, 0.0, 0.0 );
+        vec4 Specular = vec4( 0.0, 0.0, 0.0, 0.0 );
+        for ( int i = 0; i < 3; i++ ) {
+            vec3 L;
+            if ( lightPosition[i].w == 0.0 ) L = normalize( lightPosition[i].xyz );
+            else L = normalize( lightPosition[i].xyz - pos );
+
+            vec3 R = normalize( 2.0 * dot( N, L ) * N - L );
+
+            float Kd = max( dot( L, N ), 0.0 );
+            vec4 diffuse = Kd * diffuseProduct;
+
+            float Ks = pow( max( dot( R, E ), 0.0 ), shininess );
+            vec4 specular = Ks * specularProduct;
+            if ( dot( L, N ) < 0.0 ) {
+                specular = vec4( 0.0, 0.0, 0.0, 1.0 );
+            }
+            if ( i == 0 ) {
+                Diffuse += 2.0 * diffuse;
+                Specular += 2.0 * specular;
+            }
+            else {
+                Diffuse += diffuse;
+                Specular += specular;
+            }
+        }
+
+        gl_Position = uPMatrix * uMVMatrix * vec4( aVertexPosition, 1.0 );
+        
+        fColor = ambient + 0.25 * ( Diffuse + Specular );
+        // fColor = specular;
+        // fColor = diffuse;
+        // fColor = ambient;
+        fColor.a = 1.0;
+    }
+</script>
+<script id="flat_vertexShader" type="vertex">
+    #extension GL_OES_standard_derivatives : enable
+    attribute vec3 aVertexPosition;
+    attribute vec3 aFrontColor;
+    attribute vec3 aVertexNormal;
+
+    varying vec3 pos;
+    varying vec3 L[3];
+    varying vec3 E;
+    varying vec4 ambient;
+
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    uniform vec4 ambientProduct;
+    uniform vec4 lightPosition[3];
+    uniform mat3 normalMatrix;
+
+
+    void main( void ) {
+        pos = ( uMVMatrix * vec4( aVertexPosition, 1.0 ) ).xyz;
+        
+        for ( int i = 0; i < 3; i++ ) {
+            if ( lightPosition[i].w == 0.0 ) L[i] = normalize( lightPosition[i].xyz );
+            else L[i] = normalize( lightPosition[i].xyz - pos );
+        }
+        E = -normalize( pos );
+        
+        ambient = vec4( aFrontColor * ambientProduct.xyz, 1.0 );
+
+        // pos = ( uPMatrix * uMVMatrix * vec4( aVertexPosition, 1.0 ) ).xyz;
+        gl_Position = uPMatrix * uMVMatrix * vec4( aVertexPosition, 1.0 );
+    }    
+</script>
+<script id="vertexShader" type="vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec3 aFrontColor;
+    attribute vec3 aVertexNormal;
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+
+	varying vec4 fragcolor;
+
+    void main(void) {
+        fragcolor = vec4(aFrontColor.rgb, 1.0);
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+    }
+</script>
+
+<script type="text/javascript">
+    // common variables
+    var gl;
+    var ShaderProgram = {
+        phong : null,
+        flat : null,
+        gouraud : null,
+        toon : null
+    };
+    var normalMatrix = [ mat3.create(), mat3.create(), mat3.create() ];
+    var shearMatrix = [ mat4.create(), mat4.create(), mat4.create() ];
+    var mvMatrix = [ mat4.create(), mat4.create(), mat4.create() ];
+    var pMatrix  = mat4.create();
+
+    var teapotVertexPositionBuffer = new Array(3);
+    var teapotVertexNormalBuffer = new Array(3);
+    var teapotVertexFrontColorBuffer = new Array(3);
+    
+    var model_size = {
+        Teapot : [ 1, 1, 1 ],
+        Car_road : [ 15, 15, 15 ],
+        Csie : [ 20, 20, 20 ],
+        Triceratops : [ 0.15, 0.15, 0.15 ]
+    }
+    var light = {
+        position : [
+            [ 0.0, 0.0, -50.0, 1.0 ],
+            [ 50.0, 50.0, -50.0, 1.0 ],
+            [ -50.0, 50.0, -50.0, 1.0 ]
+        ]
+    }
+    var attribute = [
+        {   
+            model : "Teapot",
+            position : [ -35, 0, -80 ], 
+            scale : [ 1, 1, 1 ],
+            lightAmbient : [ 0.2, 0.2, 0.2, 1.0 ],
+            lightDiffuse : [ 1.0, 1.0, 1.0, 1.0 ],
+            lightSpecular : [ 1.0, 1.0, 1.0, 1.0 ],
+            materialAmbient : [ 1.0, 1.0, 1.0, 1.0 ],
+            materialDiffuse : [ 63 / 255, 63 / 255, 63 / 255, 1.0 ],
+            materialSpecular : [ 1.0, 1.0, 1.0, 1.0 ],
+            materialShininess : 20.0,
+            shader : "flat",
+            shear : {
+                xy : 0,
+                xz : 0,
+                yx : 0,
+                yz : 0,
+                zx : 0,
+                zy : 0,
+            },
+            rotate : {
+                x : 0,
+                y : 0,
+                z : 0
+            }
+        },
+        { 
+            model : "Teapot",
+            position : [ 0, 0, -80 ],
+            scale : [ 1, 1, 1 ],
+            lightAmbient : [ 0.2, 0.2, 0.2, 1.0 ],
+            lightDiffuse : [ 1.0, 1.0, 1.0, 1.0 ],
+            lightSpecular : [ 1.0, 1.0, 1.0, 1.0 ],
+            materialAmbient : [ 1.0, 1.0, 1.0, 1.0 ],
+            materialDiffuse : [ 63 / 255, 63 / 255, 63 / 255, 1.0 ],
+            materialSpecular : [ 1.0, 1.0, 1.0, 1.0 ],
+            materialShininess : 20.0,
+            shader : "flat",
+            shear : {
+                xy : 0,
+                xz : 0,
+                yx : 0,
+                yz : 0,
+                zx : 0,
+                zy : 0,
+            },
+            rotate : {
+                x : 0,
+                y : 0,
+                z : 0
+            }
+        },
+        { 
+            model : "Teapot",
+            position : [ 35, 0, -80 ],
+            scale : [ 1, 1, 1 ],
+            lightAmbient : [ 0.2, 0.2, 0.2, 1.0 ],
+            lightDiffuse : [ 1.0, 1.0, 1.0, 1.0 ],
+            lightSpecular : [ 1.0, 1.0, 1.0, 1.0 ],
+            materialAmbient : [ 1.0, 1.0, 1.0, 1.0 ],
+            materialDiffuse : [ 63 / 255, 63 / 255, 63 / 255, 1.0 ],
+            materialSpecular : [ 1.0, 1.0, 1.0, 1.0 ],
+            materialShininess : 20.0,
+            shader : "flat",
+            shear : {
+                xy : 0,
+                xz : 0,
+                yx : 0,
+                yz : 0,
+                zx : 0,
+                zy : 0,
+            },
+            rotate : {
+                x : 0,
+                y : 0,
+                z : 0
+            }
+        }
+    ];
+    var teapotAngle = 180;
+    var lastTime    = 0;
+    function setshear( id ) {
+        shearMatrix[id][1] = attribute[id]["shear"]["xy"];
+        shearMatrix[id][2] = attribute[id]["shear"]["xz"];
+        shearMatrix[id][4] = attribute[id]["shear"]["yx"];
+        shearMatrix[id][6] = attribute[id]["shear"]["yz"];
+        shearMatrix[id][8] = attribute[id]["shear"]["zx"];
+        shearMatrix[id][9] = attribute[id]["shear"]["zy"];
+
+    }
+    function initGL(canvas) {
+        try {
+            gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+            console.log(gl.getParameter(gl.VERSION));
+            console.log(gl.getParameter(gl.SHADING_LANGUAGE_VERSION));
+            console.log( gl.getSupportedExtensions().join("\n") );
+            var extension = gl.getExtension("OES_standard_derivatives");
+            if (!extension)
+                console.error("Extention not found.");
+            else
+                console.debug("Extention was found");
+            gl.viewportWidth  = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } 
+        catch (e) {
+        }
+
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+    }
+
+    function getShader(gl, id) {
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+
+        var shaderSource = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) {
+                shaderSource += k.textContent;
+            }
+
+            k = k.nextSibling;
+        }
+
+        var shader;
+        if (shaderScript.type == "fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+            if ( !shader ) {
+                console.log( id );
+            }
+        } 
+        else if (shaderScript.type == "vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+            if ( !shader ) {
+                console.log( id );
+            }
+        } 
+        else {
+            return null;
+        }
+
+        gl.shaderSource(shader, shaderSource);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+            return null;
+        }
+
+        return shader;
+    }
+
+    function initShaders( f_shader, v_shader ) {
+        var fragmentShader = getShader( gl, f_shader );
+        var vertexShader   = getShader(gl, v_shader );
+
+        var shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders");
+        }
+
+        gl.useProgram(shaderProgram);
+
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+        shaderProgram.vertexFrontColorAttribute = gl.getAttribLocation(shaderProgram, "aFrontColor");
+        gl.enableVertexAttribArray(shaderProgram.vertexFrontColorAttribute);
+        shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+        gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+        
+        shaderProgram.pMatrixUniform  = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+        shaderProgram.normalMatrixUniform = gl.getUniformLocation(shaderProgram, "normalMatrix");
+
+        shaderProgram.ambientProductUniform = gl.getUniformLocation( shaderProgram, "ambientProduct" );
+        shaderProgram.diffuseProductUniform = gl.getUniformLocation( shaderProgram, "diffuseProduct" );
+        shaderProgram.specularProductUniform = gl.getUniformLocation( shaderProgram, "specularProduct" );
+        shaderProgram.lightPositionUniform = gl.getUniformLocation( shaderProgram, "lightPosition" );
+        shaderProgram.shininessUniform = gl.getUniformLocation( shaderProgram, "shininess" );
+        return shaderProgram;
+    }
+
+    function setMatrixUniforms( id ) {
+        gl.uniformMatrix4fv(ShaderProgram[attribute[id]["shader"]].pMatrixUniform, false, pMatrix);
+        gl.uniformMatrix4fv(ShaderProgram[attribute[id]["shader"]].mvMatrixUniform, false, mvMatrix[id]);
+        gl.uniformMatrix3fv(ShaderProgram[attribute[id]["shader"]].normalMatrixUniform, false, normalMatrix[id]);
+    }
+
+    function setparameter( id ){
+        amb_product = mult4( attribute[id]["lightAmbient"], attribute[id]["materialAmbient"] );
+        dif_product = mult4( attribute[id]["lightDiffuse"], attribute[id]["materialDiffuse"] );
+        spec_product = mult4( attribute[id]["lightSpecular"], attribute[id]["materialSpecular"] );
+        gl.uniform4fv( ShaderProgram[attribute[id]["shader"]].ambientProductUniform, amb_product );
+        gl.uniform4fv( ShaderProgram[attribute[id]["shader"]].diffuseProductUniform, dif_product );
+        gl.uniform4fv( ShaderProgram[attribute[id]["shader"]].specularProductUniform, spec_product );
+        gl.uniform4fv( ShaderProgram[attribute[id]["shader"]].lightPositionUniform, light["position"].flat() );
+        gl.uniform1f( ShaderProgram[attribute[id]["shader"]].shininessUniform, attribute[id]["materialShininess"] );
+    }
+
+    function degToRad(degrees) {
+        return degrees * Math.PI / 180;
+    }
+
+    function handleLoadedTeapot(id, teapotData) {
+        teapotVertexPositionBuffer[id] = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexPositionBuffer[id]);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(teapotData.vertexPositions), gl.STATIC_DRAW);
+        teapotVertexPositionBuffer[id].itemSize = 3;
+        teapotVertexPositionBuffer[id].numItems = teapotData.vertexPositions.length / 3;
+
+        teapotVertexNormalBuffer[id] = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexNormalBuffer[id]);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(teapotData.vertexNormals), gl.STATIC_DRAW);
+        teapotVertexNormalBuffer[id].itemSize = 3;
+        teapotVertexNormalBuffer[id].numItems = teapotData.vertexNormals.length / 3;
+
+        teapotVertexFrontColorBuffer[id] = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexFrontColorBuffer[id]);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(teapotData.vertexFrontcolors), gl.STATIC_DRAW);
+        teapotVertexFrontColorBuffer[id].itemSize = 3;
+        teapotVertexFrontColorBuffer[id].numItems = teapotData.vertexFrontcolors.length / 3;
+    }
+
+    function loadTeapot( id, model ) {
+        var request = new XMLHttpRequest();
+        request.open( "GET", "./model/" + model + ".json" );
+        request.onreadystatechange = function () {
+            if (request.readyState == 4) {
+                handleLoadedTeapot(id, JSON.parse(request.responseText));
+            }
+        }
+        request.send();
+    }
+
+    /*
+        TODO HERE:
+        add two or more objects showing on the canvas
+        (it needs at least three objects showing at the same time)
+    */
+    function drawScene() {
+        gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+        gl.clearColor( 0.0 / 255, 25 / 255, 51 / 255, 0.1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        for ( let i = 0; i < 3; i++ ) {
+            if (teapotVertexPositionBuffer[i]   == null || 
+                teapotVertexNormalBuffer[i]     == null || 
+                teapotVertexFrontColorBuffer[i] == null) {
+                console.log( "Buffer is Null" );                
+                return;
+            }
+        }
+        // Setup Projection Matrix
+        mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 100.0, pMatrix);
+
+        for ( let i = 0; i < 3; i++ ){
+            // Setup Model-View Matrix
+            mat4.identity( mvMatrix[i] );
+            mat4.identity( shearMatrix[i] );         
+            setshear( i );   
+            mat4.translate( mvMatrix[i], attribute[i]["position"] );
+            mat4.rotate( mvMatrix[i], degToRad( teapotAngle ), [0, 1, 0] );
+            mat4.rotate( mvMatrix[i], degToRad( attribute[i]["rotate"]["x"] ), [1, 0, 0] );
+            mat4.rotate( mvMatrix[i], degToRad( attribute[i]["rotate"]["y"] ), [0, 1, 0] );
+            mat4.rotate( mvMatrix[i], degToRad( attribute[i]["rotate"]["z"] ), [0, 0, 1] );
+            mat4.scale( mvMatrix[i], attribute[i]["scale"] );
+            mat4.scale( mvMatrix[i], model_size[attribute[i]["model"]] );
+            mat4.multiply( mvMatrix[i], shearMatrix[i] );
+            mat4.toInverseMat3( mvMatrix[i], normalMatrix[i] );
+            mat3.transpose( normalMatrix[i] );
+            gl.useProgram( ShaderProgram[attribute[i]["shader"]] );
+            setMatrixUniforms( i );
+            setparameter( i );
+            // Setup teapot position data
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexPositionBuffer[i]);
+            gl.vertexAttribPointer(ShaderProgram[attribute[i]["shader"]].vertexPositionAttribute, 
+                                teapotVertexPositionBuffer[i].itemSize, 
+                                gl.FLOAT, 
+                                false, 
+                                0, 
+                                0);
+
+            // Setup teapot front color data
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexFrontColorBuffer[i]);
+            gl.vertexAttribPointer(ShaderProgram[attribute[i]["shader"]].vertexFrontColorAttribute, 
+                                teapotVertexFrontColorBuffer[i].itemSize, 
+                                gl.FLOAT, 
+                                false, 
+                                0, 
+                                0);
+
+            // Setup teapot front color data
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexNormalBuffer[i]);
+            gl.vertexAttribPointer(ShaderProgram[attribute[i]["shader"]].vertexNormalAttribute, 
+                                teapotVertexNormalBuffer[i].itemSize, 
+                                gl.FLOAT, 
+                                false, 
+                                0, 
+                                0);                       
+            gl.drawArrays(gl.TRIANGLES, 0, teapotVertexNormalBuffer[i].numItems);
+        }
+        console.log( "After draw" )
+    }
+
+    function animate() {
+        var timeNow = new Date().getTime();
+        if (lastTime != 0) {
+            var elapsed = timeNow - lastTime;
+            teapotAngle += 0.03 * elapsed;
+        }
+
+        lastTime = timeNow;
+    }
+    // let count = 0;
+    function tick() {
+        // if ( count < 10){
+        requestAnimFrame(tick);
+        drawScene();
+        animate();
+        // }
+        // count++;
+    }
+    function obj1_change_shader( e ){
+        attribute[0]["shader"] = e.target.value;
+    }
+    function obj2_change_shader( e ){
+        attribute[1]["shader"] = e.target.value;
+    }
+    function obj3_change_shader( e ){
+        attribute[2]["shader"] = e.target.value;
+    }
+    function obj1_change_shininess( e ){
+        attribute[0]["materialShininess"] = e.target.value;
+    }
+    function obj2_change_shininess( e ){
+        attribute[1]["materialShininess"] = e.target.value;
+    }
+    function obj3_change_shininess( e ){
+        attribute[2]["materialShininess"] = e.target.value;
+    }
+    function obj1_change_color( e ){
+        const color = e.target.value;
+        const r = parseInt( color.substr( 1, 2 ), 16) / 255;
+        const g = parseInt( color.substr( 3, 2 ), 16) / 255;
+        const b = parseInt( color.substr( 5, 2 ), 16) / 255;
+        attribute[0]["materialDiffuse"] = [ r, g, b, 1 ];
+    }
+    function obj2_change_color( e ){
+        const color = e.target.value;
+        const r = parseInt( color.substr( 1, 2 ), 16) / 255;
+        const g = parseInt( color.substr( 3, 2 ), 16) / 255;
+        const b = parseInt( color.substr( 5, 2 ), 16) / 255;
+        attribute[1]["materialDiffuse"] = [ r, g, b, 1 ];
+    }
+    function obj3_change_color( e ){
+        const color = e.target.value;
+        const r = parseInt( color.substr( 1, 2 ), 16) / 255;
+        const g = parseInt( color.substr( 3, 2 ), 16) / 255;
+        const b = parseInt( color.substr( 5, 2 ), 16) / 255;
+        attribute[2]["materialDiffuse"] = [ r, g, b, 1 ];
+    }
+    function obj1_change_size( e ){
+        const size = e.target.value / 10;
+        attribute[0]["scale"] = [ size, size, size ];
+    }
+    function obj2_change_size( e ){
+        const size = e.target.value / 10;
+        attribute[1]["scale"] = [ size, size, size ];
+    }
+    function obj3_change_size( e ){
+        const size = e.target.value / 10;
+        attribute[2]["scale"] = [ size, size, size ];
+    }
+    function obj1_change_shear_xy( e ){
+        const coef = e.target.value / 10;
+        attribute[0]["shear"]["xy"] = coef;
+    }
+    function obj1_change_shear_xz( e ){
+        const coef = e.target.value / 10;
+        attribute[0]["shear"]["xz"] = coef;
+    }
+    function obj1_change_shear_yx( e ){
+        const coef = e.target.value / 10;
+        attribute[0]["shear"]["yx"] = coef;
+    }
+    function obj1_change_shear_yz( e ){
+        const coef = e.target.value / 10;
+        attribute[0]["shear"]["yz"] = coef;
+    }
+    function obj1_change_shear_zx( e ){
+        const coef = e.target.value / 10;
+        attribute[0]["shear"]["zx"] = coef;
+    }
+    function obj1_change_shear_zy( e ){
+        const coef = e.target.value / 10;
+        attribute[0]["shear"]["zy"] = coef;
+    }
+    function obj2_change_shear_xy( e ){
+        const coef = e.target.value / 10;
+        attribute[1]["shear"]["xy"] = coef;
+    }
+    function obj2_change_shear_xz( e ){
+        const coef = e.target.value / 10;
+        attribute[1]["shear"]["xz"] = coef;
+    }
+    function obj2_change_shear_yx( e ){
+        const coef = e.target.value / 10;
+        attribute[1]["shear"]["yx"] = coef;
+    }
+    function obj2_change_shear_yz( e ){
+        const coef = e.target.value / 10;
+        attribute[1]["shear"]["yz"] = coef;
+    }
+    function obj2_change_shear_zx( e ){
+        const coef = e.target.value / 10;
+        attribute[1]["shear"]["zx"] = coef;
+    }
+    function obj2_change_shear_zy( e ){
+        const coef = e.target.value / 10;
+        attribute[1]["shear"]["zy"] = coef;
+    }
+    function obj3_change_shear_xy( e ){
+        const coef = e.target.value / 10;
+        attribute[2]["shear"]["xy"] = coef;
+    }
+    function obj3_change_shear_xz( e ){
+        const coef = e.target.value / 10;
+        attribute[2]["shear"]["xz"] = coef;
+    }
+    function obj3_change_shear_yx( e ){
+        const coef = e.target.value / 10;
+        attribute[2]["shear"]["yx"] = coef;
+    }
+    function obj3_change_shear_yz( e ){
+        const coef = e.target.value / 10;
+        attribute[2]["shear"]["yz"] = coef;
+    }
+    function obj3_change_shear_zx( e ){
+        const coef = e.target.value / 10;
+        attribute[2]["shear"]["zx"] = coef;
+    }
+    function obj3_change_shear_zy( e ){
+        const coef = e.target.value / 10;
+        attribute[2]["shear"]["zy"] = coef;
+    }
+    function obj1_change_model( e ){
+        const model = e.target.value;
+        attribute[0]["model"] =  model;
+        loadTeapot( 0, attribute[0]["model"] );
+    }
+    function obj2_change_model( e ){
+        const model = e.target.value;
+        attribute[1]["model"] =  model;
+        loadTeapot( 1, attribute[1]["model"] );
+    }
+    function obj3_change_model( e ){
+        const model = e.target.value;
+        attribute[2]["model"] =  model;
+        loadTeapot( 2, attribute[2]["model"] );
+    }
+    function obj1_min_rotate_x( e ){
+        attribute[0]["rotate"]["x"] -= 10;
+    }
+    function obj1_add_rotate_x( e ){
+        attribute[0]["rotate"]["x"] += 10;
+    }
+    function obj1_min_rotate_y( e ){
+        attribute[0]["rotate"]["y"] -= 10;
+    }
+    function obj1_add_rotate_y( e ){
+        attribute[0]["rotate"]["y"] += 10;
+    }
+    function obj1_min_rotate_z( e ){
+        attribute[0]["rotate"]["z"] -= 10;
+    }
+    function obj1_add_rotate_z( e ){
+        attribute[0]["rotate"]["z"] += 10;
+    }
+    function obj2_min_rotate_x( e ){
+        attribute[1]["rotate"]["x"] -= 10;
+    }
+    function obj2_add_rotate_x( e ){
+        attribute[1]["rotate"]["x"] += 10;
+    }
+    function obj2_min_rotate_y( e ){
+        attribute[1]["rotate"]["y"] -= 10;
+    }
+    function obj2_add_rotate_y( e ){
+        attribute[1]["rotate"]["y"] += 10;
+    }
+    function obj2_min_rotate_z( e ){
+        attribute[1]["rotate"]["z"] -= 10;
+    }
+    function obj2_add_rotate_z( e ){
+        attribute[1]["rotate"]["z"] += 10;
+    }
+    function obj3_min_rotate_x( e ){
+        attribute[2]["rotate"]["x"] -= 10;
+    }
+    function obj3_add_rotate_x( e ){
+        attribute[2]["rotate"]["x"] += 10;
+    }
+    function obj3_min_rotate_y( e ){
+        attribute[2]["rotate"]["y"] -= 10;
+    }
+    function obj3_add_rotate_y( e ){
+        attribute[2]["rotate"]["y"] += 10;
+    }
+    function obj3_min_rotate_z( e ){
+        attribute[2]["rotate"]["z"] -= 10;
+    }
+    function obj3_add_rotate_z( e ){
+        attribute[2]["rotate"]["z"] += 10;
+    }
+    function light_change_pos( e ){
+        let x = event.pageX;
+        let y = event.pageY;
+        x -= 640;
+        y -= 360;
+        y *= -1;
+        x /= 16;
+        y /= 16;
+        light["position"][0][0] = x;
+        light["position"][0][1] = y;
+    }
+    function buildup_ctrl(){
+        var obj1_shader = document.getElementById( "obj1 shader" );
+        obj1_shader.addEventListener( "change", obj1_change_shader );
+        var obj2_shader = document.getElementById( "obj2 shader" );
+        obj2_shader.addEventListener( "change", obj2_change_shader);
+        var obj3_shader = document.getElementById( "obj3 shader" );
+        obj3_shader.addEventListener( "change", obj3_change_shader );
+        var obj1_shininess = document.getElementById( "obj1_shininess" );
+        obj1_shininess.addEventListener( "change", obj1_change_shininess );
+        var obj2_shininess = document.getElementById( "obj2_shininess" );
+        obj2_shininess.addEventListener( "change", obj2_change_shininess );
+        var obj3_shininess = document.getElementById( "obj3_shininess" );
+        obj3_shininess.addEventListener( "change", obj3_change_shininess );
+        var obj1_color = document.getElementById( "obj1_color_picker" );
+        obj1_color.addEventListener( "change", obj1_change_color );
+        var obj2_color = document.getElementById( "obj2_color_picker" );
+        obj2_color.addEventListener( "change", obj2_change_color );
+        var obj3_color = document.getElementById( "obj3_color_picker" );
+        obj3_color.addEventListener( "change", obj3_change_color );
+        var obj1_size = document.getElementById( "obj1_size" );
+        obj1_size.addEventListener( "change", obj1_change_size );
+        var obj2_size = document.getElementById( "obj2_size" );
+        obj2_size.addEventListener( "change", obj2_change_size );
+        var obj3_size = document.getElementById( "obj3_size" );
+        obj3_size.addEventListener( "change", obj3_change_size );
+        var obj1_shear_xy = document.getElementById( "obj1_shear_xy" );
+        obj1_shear_xy.addEventListener( "change", obj1_change_shear_xy );
+        var obj1_shear_xz = document.getElementById( "obj1_shear_xz" );
+        obj1_shear_xz.addEventListener( "change", obj1_change_shear_xz );
+        var obj1_shear_yx = document.getElementById( "obj1_shear_yx" );
+        obj1_shear_yx.addEventListener( "change", obj1_change_shear_yx );
+        var obj1_shear_yz = document.getElementById( "obj1_shear_yz" );
+        obj1_shear_yz.addEventListener( "change", obj1_change_shear_yz );
+        var obj1_shear_zx = document.getElementById( "obj1_shear_zx" );
+        obj1_shear_zx.addEventListener( "change", obj1_change_shear_zx );
+        var obj1_shear_zy = document.getElementById( "obj1_shear_zy" );
+        obj1_shear_zy.addEventListener( "change", obj1_change_shear_zy );
+        var obj2_shear_xy = document.getElementById( "obj2_shear_xy" );
+        obj2_shear_xy.addEventListener( "change", obj2_change_shear_xy );
+        var obj2_shear_xz = document.getElementById( "obj2_shear_xz" );
+        obj2_shear_xz.addEventListener( "change", obj2_change_shear_xz );
+        var obj2_shear_yx = document.getElementById( "obj2_shear_yx" );
+        obj2_shear_yx.addEventListener( "change", obj2_change_shear_yx );
+        var obj2_shear_yz = document.getElementById( "obj2_shear_yz" );
+        obj2_shear_yz.addEventListener( "change", obj2_change_shear_yz );
+        var obj2_shear_zx = document.getElementById( "obj2_shear_zx" );
+        obj2_shear_zx.addEventListener( "change", obj2_change_shear_zx );
+        var obj2_shear_zy = document.getElementById( "obj2_shear_zy" );
+        obj2_shear_zy.addEventListener( "change", obj2_change_shear_zy );
+        var obj3_shear_xy = document.getElementById( "obj3_shear_xy" );
+        obj3_shear_xy.addEventListener( "change", obj3_change_shear_xy );
+        var obj3_shear_xz = document.getElementById( "obj3_shear_xz" );
+        obj3_shear_xz.addEventListener( "change", obj3_change_shear_xz );
+        var obj3_shear_yx = document.getElementById( "obj3_shear_yx" );
+        obj3_shear_yx.addEventListener( "change", obj3_change_shear_yx );
+        var obj3_shear_yz = document.getElementById( "obj3_shear_yz" );
+        obj3_shear_yz.addEventListener( "change", obj3_change_shear_yz );
+        var obj3_shear_zx = document.getElementById( "obj3_shear_zx" );
+        obj3_shear_zx.addEventListener( "change", obj3_change_shear_zx );
+        var obj3_shear_zy = document.getElementById( "obj3_shear_zy" );
+        obj3_shear_zy.addEventListener( "change", obj3_change_shear_zy );
+        var obj1_model = document.getElementById( "obj1_model" );
+        obj1_model.addEventListener( "change", obj1_change_model );
+        var obj2_model = document.getElementById( "obj2_model" );
+        obj2_model.addEventListener( "change", obj2_change_model );
+        var obj3_model = document.getElementById( "obj3_model" );
+        obj3_model.addEventListener( "change", obj3_change_model );
+        var obj1_m_rx = document.getElementById( "obj1_rotate_x_min" );
+        obj1_m_rx.addEventListener( "click", obj1_min_rotate_x );
+        var obj1_a_rx = document.getElementById( "obj1_rotate_x_add" );
+        obj1_a_rx.addEventListener( "click", obj1_add_rotate_x );
+        var obj1_m_ry = document.getElementById( "obj1_rotate_y_min" );
+        obj1_m_ry.addEventListener( "click", obj1_min_rotate_y );
+        var obj1_a_ry = document.getElementById( "obj1_rotate_y_add" );
+        obj1_a_ry.addEventListener( "click", obj1_add_rotate_y );
+        var obj1_m_rz = document.getElementById( "obj1_rotate_z_min" );
+        obj1_m_rz.addEventListener( "click", obj1_min_rotate_z );
+        var obj1_a_rz = document.getElementById( "obj1_rotate_z_add" );
+        obj1_a_rz.addEventListener( "click", obj1_add_rotate_z );
+        var obj2_m_rx = document.getElementById( "obj2_rotate_x_min" );
+        obj2_m_rx.addEventListener( "click", obj2_min_rotate_x );
+        var obj2_a_rx = document.getElementById( "obj2_rotate_x_add" );
+        obj2_a_rx.addEventListener( "click", obj2_add_rotate_x );
+        var obj2_m_ry = document.getElementById( "obj2_rotate_y_min" );
+        obj2_m_ry.addEventListener( "click", obj2_min_rotate_y );
+        var obj2_a_ry = document.getElementById( "obj2_rotate_y_add" );
+        obj2_a_ry.addEventListener( "click", obj2_add_rotate_y );
+        var obj2_m_rz = document.getElementById( "obj2_rotate_z_min" );
+        obj2_m_rz.addEventListener( "click", obj2_min_rotate_z );
+        var obj2_a_rz = document.getElementById( "obj2_rotate_z_add" );
+        obj2_a_rz.addEventListener( "click", obj2_add_rotate_z );
+        var obj3_m_rx = document.getElementById( "obj3_rotate_x_min" );
+        obj3_m_rx.addEventListener( "click", obj3_min_rotate_x );
+        var obj3_a_rx = document.getElementById( "obj3_rotate_x_add" );
+        obj3_a_rx.addEventListener( "click", obj3_add_rotate_x );
+        var obj3_m_ry = document.getElementById( "obj3_rotate_y_min" );
+        obj3_m_ry.addEventListener( "click", obj3_min_rotate_y );
+        var obj3_a_ry = document.getElementById( "obj3_rotate_y_add" );
+        obj3_a_ry.addEventListener( "click", obj3_add_rotate_y );
+        var obj3_m_rz = document.getElementById( "obj3_rotate_z_min" );
+        obj3_m_rz.addEventListener( "click", obj3_min_rotate_z );
+        var obj3_a_rz = document.getElementById( "obj3_rotate_z_add" );
+        obj3_a_rz.addEventListener( "click", obj3_add_rotate_z );
+        var canv = document.getElementById( "ICG-canvas" );
+        canv.addEventListener( "mousemove", light_change_pos );
+    }
+    function webGLStart() {
+        var canvas = document.getElementById("ICG-canvas");
+        initGL(canvas);
+        buildup_ctrl();
+        ShaderProgram["phong"] = initShaders( "phong_fragmentShader", "phong_vertexShader" );
+        ShaderProgram["flat"] = initShaders( "flat_fragmentShader", "flat_vertexShader" );
+        ShaderProgram["gouraud"] = initShaders( "fragmentShader", "gouraud_vertexShader" );
+        ShaderProgram["toon"] = initShaders( "toon_fragmentShader", "toon_vertexShader" );
+        for ( let i = 0; i < 3; i++ ) {
+            loadTeapot( i, attribute[i]["model"] );
+        }
+        gl.clearColor(0.0, 0.2, 0.2, 1.0);
+        gl.enable(gl.DEPTH_TEST);
+
+        tick();
+    }
+</script>
+</head>
+
+<body onload="webGLStart();">
+    <canvas id="ICG-canvas" style="border: none;" width="1280" height="720"></canvas>
+    <br/>
+    <div class="col_lg col_sm">
+        <div class="inside_col_12"><h1>Obj1</h1></div>
+        <div class="inside_col_12"><h3>model</h3></div>
+        <div class="inside_col_4">
+            <label>shader</label>
+            <br/>
+            <select id="obj1 shader">
+                <option value="flat" selected>flat</option>
+                <option value="gouraud">gouraud</option>
+                <option value="phong">phong</option>
+                <option value="toon">toon</option>
+            </select>
+        </div>
+        <div class="inside_col_4">
+            <label>object</label>
+            <br/>
+            <select id="obj1_model">
+                <option value="Teapot" selected>Teapot</option>
+                <option value="Car_road">Car_road</option>
+                <option value="Csie">Csie</option>
+                <option value="Triceratops">Triceratops</option>
+            </select>
+        </div>
+        <div class="inside_col_4">
+            <label>size</label>
+            <br/>
+            <input class="sm_slide", type="range" min="5" max="15" value="10" class="slider" id="obj1_size">
+        </div>
+        <div class="inside_col_12"><h3>rotation</h3></div>
+        <div class="inside_col_4">
+            <label>rotate x</label>
+            <input type="button" value="-", id="obj1_rotate_x_min">
+            <input type="button" value="+", id="obj1_rotate_x_add">
+        </div>
+        <div class="inside_col_4">
+            <label>rotate y</label>
+            <input type="button" value="-", id="obj1_rotate_y_min">
+            <input type="button" value="+", id="obj1_rotate_y_add">
+        </div>
+        <div class="inside_col_4">
+            <label>rotate z</label>
+            <input type="button" value="-", id="obj1_rotate_z_min">
+            <input type="button" value="+", id="obj1_rotate_z_add">
+        </div>
+        <div class="inside_col_12"><h3>Outlook</h3></div>
+        <div class="inside_col_12">
+            <label>shininess</label>
+            <br/>
+            <input type="range" min="1" max="100" value="20" class="slider" id="obj1_shininess">
+            <br/>
+            <label>color</label>
+            <br/>
+            <input type="color" id = "obj1_color_picker" value="#636363">
+        </div>
+        <div class="inside_col_12"><h3>shear</h3></div>
+        <div>
+            <label>xy</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj1_shear_xy">
+            <br/>
+            <label>xz</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj1_shear_xz">
+            <br/>
+            <label>yx</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj1_shear_yx">
+            <br/>
+            <label>yz</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj1_shear_yz">
+            <br/>
+            <label>zx</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj1_shear_zx">
+            <br/>
+            <label>zy</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj1_shear_zy">
+        </div>
+    </div>
+    <div class="col_lg col_sm">
+        <div class="inside_col_12"><h1>Obj2</h1></div>
+        <div class="inside_col_12"><h3>model</h3></div>
+        <div class="inside_col_4">
+            <label>shader</label>
+            <br/>
+            <select id="obj2 shader">
+                <option value="flat" selected>flat</option>
+                <option value="gouraud">gouraud</option>
+                <option value="phong">phong</option>
+                <option value="toon">toon</option>
+            </select>
+        </div>
+        <div class="inside_col_4">
+            <label>object</label>
+            <br/>
+            <select id="obj2_model">
+                <option value="Teapot" selected>Teapot</option>
+                <option value="Car_road">Car_road</option>
+                <option value="Csie">Csie</option>
+                <option value="Triceratops">Triceratops</option>
+            </select>
+        </div>
+        <div class="inside_col_4">
+            <label>size</label>
+            <br/>
+            <input class="sm_slide", type="range" min="5" max="15" value="10" class="slider" id="obj2_size">
+        </div>
+        <div class="inside_col_12"><h3>rotation</h3></div>
+        <div class="inside_col_4">
+            <label>rotate x</label>
+            <input type="button" value="-", id="obj2_rotate_x_min">
+            <input type="button" value="+", id="obj2_rotate_x_add">
+        </div>
+        <div class="inside_col_4">
+            <label>rotate y</label>
+            <input type="button" value="-", id="obj2_rotate_y_min">
+            <input type="button" value="+", id="obj2_rotate_y_add">
+        </div>
+        <div class="inside_col_4">
+            <label>rotate z</label>
+            <input type="button" value="-", id="obj2_rotate_z_min">
+            <input type="button" value="+", id="obj2_rotate_z_add">
+        </div>
+        <div class="inside_col_12"><h3>Outlook</h3></div>
+        <div class="inside_col_12">
+            <label>shininess</label>
+            <br/>
+            <input type="range" min="1" max="100" value="20" class="slider" id="obj2_shininess">
+            <br/>
+            <label>color</label>
+            <br/>
+            <input type="color" id = "obj2_color_picker" value="#636363">
+        </div>
+        <div class="inside_col_12"><h3>shear</h3></div>
+        <div>
+            <label>xy</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj2_shear_xy">
+            <br/>
+            <label>xz</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj2_shear_xz">
+            <br/>
+            <label>yx</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj2_shear_yx">
+            <br/>
+            <label>yz</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj2_shear_yz">
+            <br/>
+            <label>zx</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj2_shear_zx">
+            <br/>
+            <label>zy</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj2_shear_zy">
+        </div>
+    </div>
+    <div class="col_lg col_sm">
+        <div class="inside_col_12"><h1>Obj3</h1></div>
+        <div class="inside_col_12"><h3>model</h3></div>
+        <div class="inside_col_4">
+            <label>shader</label>
+            <br/>
+            <select id="obj3 shader">
+                <option value="flat" selected>flat</option>
+                <option value="gouraud">gouraud</option>
+                <option value="phong">phong</option>
+                <option value="toon">toon</option>
+            </select>
+        </div>
+        <div class="inside_col_4">
+            <label>object</label>
+            <br/>
+            <select id="obj3_model">
+                <option value="Teapot" selected>Teapot</option>
+                <option value="Car_road">Car_road</option>
+                <option value="Csie">Csie</option>
+                <option value="Triceratops">Triceratops</option>
+            </select>
+        </div>
+        <div class="inside_col_4">
+            <label>size</label>
+            <br/>
+            <input class="sm_slide", type="range" min="5" max="15" value="10" class="slider" id="obj3_size">
+        </div>
+        <div class="inside_col_12"><h3>rotation</h3></div>
+        <div class="inside_col_4">
+            <label>rotate x</label>
+            <input type="button" value="-", id="obj3_rotate_x_min">
+            <input type="button" value="+", id="obj3_rotate_x_add">
+        </div>
+        <div class="inside_col_4">
+            <label>rotate y</label>
+            <input type="button" value="-", id="obj3_rotate_y_min">
+            <input type="button" value="+", id="obj3_rotate_y_add">
+        </div>
+        <div class="inside_col_4">
+            <label>rotate z</label>
+            <input type="button" value="-", id="obj3_rotate_z_min">
+            <input type="button" value="+", id="obj3_rotate_z_add">
+        </div>
+        <div class="inside_col_12"><h3>Outlook</h3></div>
+        <div class="inside_col_12">
+            <label>shininess</label>
+            <br/>
+            <input type="range" min="1" max="100" value="20" class="slider" id="obj3_shininess">
+            <br/>
+            <label>color</label>
+            <br/>
+            <input type="color" id = "obj3_color_picker" value="#636363">
+        </div>
+        <div class="inside_col_12"><h3>shear</h3></div>
+        <div>
+            <label>xy</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj3_shear_xy">
+            <br/>
+            <label>xz</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj3_shear_xz">
+            <br/>
+            <label>yx</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj3_shear_yx">
+            <br/>
+            <label>yz</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj3_shear_yz">
+            <br/>
+            <label>zx</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj3_shear_zx">
+            <br/>
+            <label>zy</label>
+            <input type="range" min="-10" max="10" value="0" class="slider" id="obj3_shear_zy">
+        </div>
+    </div>
+</body>
+
+</html>
